@@ -1,6 +1,6 @@
 # PostgreSQL Data Explorer
 
-Lokálna desktopová aplikácia s natívnym GUI (`tkinter`) na bezpečné prehliadanie PostgreSQL tabuliek podľa ERD:
+Lokálna desktopová aplikácia s multiplatformovým GUI (`PySide6/Qt`) na bezpečné prehliadanie PostgreSQL tabuliek podľa ERD:
 `processes`, `events`, `images`, `processes_tags`, `label_metadata`.
 
 ## Funkcie
@@ -68,7 +68,7 @@ Ak sa dáta nachádzajú v inej schéme, zmeň `public`. Tento účet nepoužív
 python app.py
 ```
 
-Po spustení sa otvorí samostatné okno aplikácie. Python na macOS a Windows obsahuje `tkinter` štandardne; na niektorých Linux distribúciách môže byť potrebné doinštalovať balík `python3-tk`.
+Po spustení sa otvorí samostatné okno aplikácie. PySide6 poskytuje rovnaké GUI widgety na macOS aj Windows.
 
 ## 6. Výkon pri miliónoch riadkov
 
