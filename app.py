@@ -102,16 +102,19 @@ class Explorer(tk.Tk):
                               highlightthickness=1, width=330, height=28)
         search_box.pack(side="left", padx=8)
         search_box.pack_propagate(False)
-        self.search_entry = tk.Entry(
+        self.search_entry = tk.Text(
             search_box,
-            textvariable=self.search,
-            background="#ffffff",
-            foreground="#000000",
+            height=1,
+            wrap="none",
+            bg="#ffffff",
+            fg="#000000",
             insertbackground="#000000",
             selectbackground="#3478c9",
             selectforeground="#ffffff",
             relief="flat",
             borderwidth=0,
+            padx=3,
+            pady=3,
         )
         self.search_entry.pack(fill="both", expand=True, padx=4)
         self.search_entry.bind("<Return>", lambda _event: self.refresh_current())
@@ -132,21 +135,21 @@ class Explorer(tk.Tk):
         tree_box = tk.Frame(left, background="#ffffff", highlightbackground="#888888",
                             highlightthickness=1)
         tree_box.pack(fill="both", expand=True)
-        self.tree_list = tk.Listbox(
+        self.tree_list = tk.Text(
             tree_box,
-            activestyle="none",
-            exportselection=False,
-            background="#ffffff",
-            foreground="#000000",
-            selectbackground="#3478c9",
-            selectforeground="#ffffff",
+            wrap="none",
+            bg="#ffffff",
+            fg="#000000",
+            insertbackground="#000000",
             font=("Helvetica", 11),
-            height=20,
-            relief="solid",
-            borderwidth=1,
+            relief="flat",
+            borderwidth=0,
+            padx=6,
+            pady=6,
+            state="disabled",
         )
         self.tree_list.pack(fill="both", expand=True, padx=2, pady=2)
-        self.tree_list.bind("<<ListboxSelect>>", self._list_selected)
+        self.tree_list.bind("<ButtonRelease-1>", self._list_selected)
 
         right = tk.Frame(body, background="#f4f4f4")
         right.grid(row=0, column=1, sticky="nsew")
@@ -157,17 +160,18 @@ class Explorer(tk.Tk):
         table_box = tk.Frame(right, background="#ffffff", highlightbackground="#888888",
                              highlightthickness=1)
         table_box.grid(row=1, column=0, sticky="nsew")
-        self.table_list = tk.Listbox(
+        self.table_list = tk.Text(
             table_box,
-            activestyle="none",
-            background="#ffffff",
-            foreground="#000000",
-            selectbackground="#3478c9",
-            selectforeground="#ffffff",
+            wrap="none",
+            bg="#ffffff",
+            fg="#000000",
+            insertbackground="#000000",
             font=("Courier", 10),
-            height=20,
-            relief="solid",
-            borderwidth=1,
+            relief="flat",
+            borderwidth=0,
+            padx=6,
+            pady=6,
+            state="disabled",
         )
         self.table_list.pack(fill="both", expand=True, padx=2, pady=2)
         self.page_button = tk.Button(right, textvariable=self.page_info, command=self.next_page)
@@ -282,16 +286,17 @@ class Explorer(tk.Tk):
             )
 
     def _list_selected(self, _event: tk.Event) -> None:
-        selection = self.tree_list.curselection()
-        if not selection:
+        index = self.tree_list.index(f"@{_event.x},{_event.y}")
+        line_number = int(index.split(".", 1)[0]) - 1
+        if line_number < 0 or line_number >= len(self.nodes):
             return
-        _label, kind, node_id = self.nodes[selection[0]]
+        _label, kind, node_id = self.nodes[line_number]
         self._selected_kind = kind
         self._selected_id = node_id
         self._tree_selected(_event)
 
     def _search_clause(self, table: str) -> tuple[str, dict[str, str]]:
-        term = self.search.get().strip()
+        term = self.search_entry.get("1.0", "end-1c").strip()
         if not term:
             return "", {}
         text_columns = [
@@ -338,39 +343,46 @@ class Explorer(tk.Tk):
 
     def _show_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
         columns = self.columns.get(table, list(rows[0]) if rows else [])
-        self.table_list.delete(0, tk.END)
+        self.table_list.configure(state="normal")
+        self.table_list.delete("1.0", tk.END)
         if columns:
-            self.table_list.insert(tk.END, " | ".join(columns))
+            self.table_list.insert(tk.END, " | ".join(columns) + "\n")
         if rows:
             for row in rows[:PAGE_SIZE]:
                 self.table_list.insert(
-                    tk.END,
-                    " | ".join(value_text(row.get(column))[:40] for column in columns),
+                    tk.END, " | ".join(
+                        value_text(row.get(column))[:40] for column in columns
+                    ) + "\n",
                 )
         else:
             self.table_list.insert(tk.END, "Žiadne záznamy pre aktuálny výber.")
+        self.table_list.configure(state="disabled")
         self.page_info.set(f"{len(rows)} záznamov • tabuľka {table}")
 
     def _populate_hierarchy(self, table: str, rows: list[dict[str, Any]]) -> None:
         if table == "images":
-            self.tree_list.delete(0, tk.END)
+            self.tree_list.configure(state="normal")
+            self.tree_list.delete("1.0", tk.END)
             self.nodes.clear()
             self.image_node_count = 0
             for row in rows:
                 image_id = row.get("id")
                 label = f"Image {image_id}: {row.get('original_name') or row.get('path') or ''}"
                 self.nodes.append((label, "image", image_id))
-                self.tree_list.insert(tk.END, label[:45])
+                self.tree_list.insert(tk.END, label[:45] + "\n")
             self.image_node_count = len(self.nodes)
+            self.tree_list.configure(state="disabled")
         elif table == "processes":
             if self.image_node_count:
-                self.tree_list.delete(self.image_node_count, tk.END)
+                self.tree_list.configure(state="normal")
+                self.tree_list.delete(f"{self.image_node_count + 1}.0", tk.END)
                 self.nodes = self.nodes[:self.image_node_count]
             for row in rows:
                 process_id = row.get("id")
                 label = f"Process {process_id}: {row.get('name') or ''}"
                 self.nodes.append((label, "process", process_id))
-                self.tree_list.insert(tk.END, f"  {label[:43]}")
+                self.tree_list.insert(tk.END, f"  {label[:43]}\n")
+            self.tree_list.configure(state="disabled")
 
     def refresh_current(self) -> None:
         if self.current_table == "images":
@@ -379,7 +391,9 @@ class Explorer(tk.Tk):
             self._tree_selected(tk.Event())
 
     def clear_search(self) -> None:
-        self.search.set("")
+        self.search_entry.configure(state="normal")
+        self.search_entry.delete("1.0", tk.END)
+        self.search_entry.configure(state="normal")
         self.refresh_current()
 
     def _search_changed(self, _event: tk.Event) -> None:
