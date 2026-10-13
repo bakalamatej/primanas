@@ -549,10 +549,12 @@ class Explorer(BoxLayout):
 
 class ExplorerApp(App):
     def build(self) -> Explorer:
+        Window.borderless = False
         Window.position = "custom"
         Window.size = (1450, 850)
         Window.minimum_width = 950
         Window.minimum_height = 600
+        Window.set_title("Data Explorer")
         explorer = Explorer()
         Clock.schedule_once(self._center_window, 0.1)
         return explorer
@@ -560,8 +562,8 @@ class ExplorerApp(App):
     @staticmethod
     def _center_window(_dt: float) -> None:
         screen_width, screen_height = Window.system_size
-        Window.left = max(0, int((screen_width - Window.width) / 2))
-        Window.top = max(0, int((screen_height - Window.height) / 2))
+        Window.left = max(30, int((screen_width - Window.width) / 2))
+        Window.top = max(30, int((screen_height - Window.height) / 2))
 
 
 if __name__ == "__main__":
