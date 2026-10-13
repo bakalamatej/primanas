@@ -4,7 +4,7 @@ import os
 import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 from urllib.parse import quote_plus
 from typing import Any, Callable
 
@@ -54,29 +54,32 @@ def identifier(name: str) -> str:
 
 
 def value_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value)
+    return "" if value is None else str(value)
 
 
 class Explorer(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("PostgreSQL Data Explorer")
-        self.geometry("1400x850")
-        self.minsize(900, 600)
+        self.geometry("1450x850")
+        self.minsize(950, 600)
+        self.configure(bg="#f3f5f7")
+
         self.engine: Engine | None = None
-        self.ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self.columns: dict[str, list[str]] = {}
-        self.current_table = "images"
-        self.current_rows: list[dict[str, Any]] = []
+        self.ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
+        self.query_generation = 0
         self.loading = False
-        self.search_job: str | None = None
-        self.image_node_count = 0
+
+        self.current_table = "images"
+        self.current_image_id: Any = None
+        self.current_process_id: Any = None
+        self.current_rows: list[dict[str, Any]] = []
+        self.current_page = 0
+        self.current_title = "Images"
 
         self.status = tk.StringVar(value="Pripájam sa k databáze…")
         self.search = tk.StringVar()
-        self.page = tk.IntVar(value=1)
         self.page_info = tk.StringVar(value="")
 
         self._build_ui()
@@ -84,126 +87,159 @@ class Explorer(tk.Tk):
         self.after(100, self._start_connection)
 
     def _build_ui(self) -> None:
-        self.configure(background="#f4f4f4")
-        self.grid_rowconfigure(2, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-        self.nodes: list[tuple[str, str, Any]] = []
-        header = tk.Frame(self, background="#f4f4f4")
-        header.grid(row=0, column=0, sticky="ew", padx=12, pady=10)
-        tk.Button(header, text="PostgreSQL Data Explorer", command=lambda: None).pack(side="left")
-        self.status_label = tk.Button(header, textvariable=self.status, command=lambda: None)
-        self.status_label.pack(side="left", padx=12)
-        tk.Button(header, text="Obnoviť", command=self.refresh_current).pack(side="right")
-
-        toolbar = tk.Frame(self, background="#f4f4f4")
-        toolbar.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 8))
-        tk.Button(toolbar, text="Vyhľadávanie", command=lambda: self.search_entry.focus_set()).pack(side="left")
-        search_box = tk.Frame(toolbar, background="#ffffff", highlightbackground="#888888",
-                              highlightthickness=1, width=330, height=28)
-        search_box.pack(side="left", padx=8)
-        search_box.pack_propagate(False)
-        self.search_entry = tk.Text(
-            search_box,
-            height=1,
-            wrap="none",
-            bg="#ffffff",
-            fg="#000000",
-            insertbackground="#000000",
-            selectbackground="#3478c9",
-            selectforeground="#ffffff",
-            relief="flat",
-            borderwidth=0,
-            padx=3,
-            pady=3,
-        )
-        self.search_entry.pack(fill="both", expand=True, padx=4)
-        self.search_entry.bind("<Return>", lambda _event: self.refresh_current())
-        self.search_entry.bind("<KeyRelease>", self._search_changed)
-        tk.Button(toolbar, text="Hľadať", command=self.refresh_current).pack(side="left")
-        tk.Button(toolbar, text="Vymazať", command=self.clear_search).pack(side="left", padx=5)
-
-        body = tk.Frame(self, background="#f4f4f4")
-        body.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
-        body.grid_columnconfigure(1, weight=1)
-        body.grid_rowconfigure(0, weight=1)
-
-        left = tk.Frame(body, background="#f4f4f4", width=310)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        left.grid_propagate(False)
-        tk.Button(left, text="Hierarchia databázy", command=lambda: None).pack(fill="x", pady=(0, 4))
-        tk.Button(left, text="Image -> Processes -> Events", command=lambda: None).pack(fill="x", pady=(0, 4))
-        tree_box = tk.Frame(left, background="#ffffff", highlightbackground="#888888",
-                            highlightthickness=1)
-        tree_box.pack(fill="both", expand=True)
-        self.tree_list = tk.Text(
-            tree_box,
-            wrap="none",
-            bg="#ffffff",
-            fg="#000000",
-            insertbackground="#000000",
-            font=("Helvetica", 11),
-            relief="flat",
-            borderwidth=0,
-            padx=6,
-            pady=6,
-            state="disabled",
-        )
-        self.tree_list.pack(fill="both", expand=True, padx=2, pady=2)
-        self.tree_list.bind("<ButtonRelease-1>", self._list_selected)
-
-        right = tk.Frame(body, background="#f4f4f4")
-        right.grid(row=0, column=1, sticky="nsew")
-        right.grid_columnconfigure(0, weight=1)
-        right.grid_rowconfigure(1, weight=1)
-        self.title_button = tk.Button(right, text="Images", command=lambda: None)
-        self.title_button.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        table_box = tk.Frame(right, background="#ffffff", highlightbackground="#888888",
-                             highlightthickness=1)
-        table_box.grid(row=1, column=0, sticky="nsew")
-        self.table_list = tk.Text(
-            table_box,
-            wrap="none",
-            bg="#ffffff",
-            fg="#000000",
-            insertbackground="#000000",
-            font=("Courier", 10),
-            relief="flat",
-            borderwidth=0,
-            padx=6,
-            pady=6,
-            state="disabled",
-        )
-        self.table_list.pack(fill="both", expand=True, padx=2, pady=2)
-        self.page_button = tk.Button(right, textvariable=self.page_info, command=self.next_page)
-        self.page_button.grid(row=2, column=0, sticky="ew", pady=(5, 0))
-
-    def _configure_style(self) -> None:
         style = ttk.Style(self)
-        style.theme_use("clam")
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
         style.configure(
             "Treeview",
             background="white",
             fieldbackground="white",
-            foreground="black",
-            rowheight=25,
+            foreground="#202124",
+            rowheight=27,
+            borderwidth=0,
         )
         style.configure(
             "Treeview.Heading",
-            background="#dddddd",
-            foreground="black",
+            background="#e9edf2",
+            foreground="#202124",
             font=("Helvetica", 10, "bold"),
+            padding=(6, 7),
         )
-        style.configure(
-            "TScrollbar",
-            background="#dddddd",
-            troughcolor="#f4f4f4",
-            arrowcolor="black",
+        style.map(
+            "Treeview",
+            background=[("selected", "#cfe4ff")],
+            foreground=[("selected", "#172b4d")],
         )
-        style.configure(
-            "TLabel",
-            background="white",
-            foreground="black",
+
+        header = tk.Frame(self, bg="#f3f5f7")
+        header.pack(fill="x", padx=16, pady=(14, 8))
+
+        tk.Label(
+            header,
+            text="PostgreSQL Data Explorer",
+            bg="#f3f5f7",
+            fg="#202124",
+            font=("Helvetica", 18, "bold"),
+        ).pack(side="left")
+
+        tk.Label(
+            header,
+            textvariable=self.status,
+            bg="#f3f5f7",
+            fg="#52606d",
+            font=("Helvetica", 10),
+        ).pack(side="left", padx=(18, 0))
+
+        ttk.Button(header, text="Obnoviť", command=self.refresh_current).pack(
+            side="right"
         )
+
+        toolbar = tk.Frame(self, bg="#f3f5f7")
+        toolbar.pack(fill="x", padx=16, pady=(0, 10))
+
+        tk.Label(
+            toolbar, text="Filter:", bg="#f3f5f7", fg="#202124"
+        ).pack(side="left")
+
+        search_entry = ttk.Entry(toolbar, textvariable=self.search, width=38)
+        search_entry.pack(side="left", padx=(8, 6))
+        search_entry.bind("<Return>", lambda _event: self.apply_search())
+
+        ttk.Button(toolbar, text="Hľadať", command=self.apply_search).pack(side="left")
+        ttk.Button(toolbar, text="Vymazať filter", command=self.clear_search).pack(
+            side="left", padx=(6, 0)
+        )
+
+        main = tk.Frame(self, bg="#f3f5f7")
+        main.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        main.grid_rowconfigure(0, weight=1)
+        main.grid_columnconfigure(0, minsize=300, weight=0)
+        main.grid_columnconfigure(1, weight=1)
+
+        left = ttk.Frame(main, padding=10)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left.grid_rowconfigure(1, weight=1)
+        left.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(left, text="Images", font=("Helvetica", 13, "bold")).grid(
+            row=0, column=0, sticky="w", pady=(0, 8)
+        )
+
+        image_frame = ttk.Frame(left)
+        image_frame.grid(row=1, column=0, sticky="nsew")
+        image_frame.grid_rowconfigure(0, weight=1)
+        image_frame.grid_columnconfigure(0, weight=1)
+
+        self.image_tree = ttk.Treeview(
+            image_frame,
+            columns=("id", "name", "process_count"),
+            show="headings",
+            selectmode="browse",
+        )
+        self.image_tree.heading("id", text="ID")
+        self.image_tree.heading("name", text="Názov / cesta")
+        self.image_tree.heading("process_count", text="Procesy")
+        self.image_tree.column("id", width=55, minwidth=45, stretch=False, anchor="e")
+        self.image_tree.column("name", width=185, minwidth=100, stretch=True)
+        self.image_tree.column(
+            "process_count", width=75, minwidth=65, stretch=False, anchor="center"
+        )
+        image_scroll = ttk.Scrollbar(
+            image_frame, orient="vertical", command=self.image_tree.yview
+        )
+        self.image_tree.configure(yscrollcommand=image_scroll.set)
+        self.image_tree.grid(row=0, column=0, sticky="nsew")
+        image_scroll.grid(row=0, column=1, sticky="ns")
+        self.image_tree.bind("<<TreeviewSelect>>", self._image_selected)
+
+        right = ttk.Frame(main, padding=10)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.grid_rowconfigure(1, weight=1)
+        right.grid_columnconfigure(0, weight=1)
+
+        self.content_title = ttk.Label(
+            right, text="Vyber obrázok", font=("Helvetica", 13, "bold")
+        )
+        self.content_title.grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        result_frame = ttk.Frame(right)
+        result_frame.grid(row=1, column=0, sticky="nsew")
+        result_frame.grid_rowconfigure(0, weight=1)
+        result_frame.grid_columnconfigure(0, weight=1)
+
+        self.result_tree = ttk.Treeview(
+            result_frame, show="headings", selectmode="browse"
+        )
+        y_scroll = ttk.Scrollbar(
+            result_frame, orient="vertical", command=self.result_tree.yview
+        )
+        x_scroll = ttk.Scrollbar(
+            result_frame, orient="horizontal", command=self.result_tree.xview
+        )
+        self.result_tree.configure(
+            yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set
+        )
+        self.result_tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        self.result_tree.bind("<<TreeviewSelect>>", self._process_selected)
+
+        footer = ttk.Frame(right)
+        footer.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        footer.grid_columnconfigure(1, weight=1)
+        self.prev_button = ttk.Button(
+            footer, text="← Predchádzajúca", command=self.previous_page, state="disabled"
+        )
+        self.prev_button.grid(row=0, column=0, sticky="w")
+        ttk.Label(footer, textvariable=self.page_info).grid(
+            row=0, column=1, sticky="ew", padx=10
+        )
+        self.next_button = ttk.Button(
+            footer, text="Nasledujúca →", command=self.next_page, state="disabled"
+        )
+        self.next_button.grid(row=0, column=2, sticky="e")
 
     def _start_connection(self) -> None:
         self._run_async(self._connect_and_inspect, self._connection_finished)
@@ -214,207 +250,343 @@ class Explorer(tk.Tk):
             connection.execute(text("SELECT 1"))
         inspector = inspect(engine)
         columns = {
-            table: [column["name"] for column in inspector.get_columns(table, schema=SCHEMA)]
+            table: [
+                column["name"]
+                for column in inspector.get_columns(table, schema=SCHEMA)
+            ]
             for table in TABLES
             if inspector.has_table(table, schema=SCHEMA)
         }
         return engine, columns
 
     def _connection_finished(
-        self, result: tuple[Engine, dict[str, list[str]]] | None, error: Exception | None
+        self,
+        result: tuple[Engine, dict[str, list[str]]] | None,
+        error: Exception | None,
     ) -> None:
         if error:
             self.status.set("Pripojenie zlyhalo")
-            self.status_label.configure(text=self.status.get())
             messagebox.showerror("Databáza", str(error), parent=self)
             return
+
         assert result is not None
         self.engine, self.columns = result
         missing = [table for table in TABLES if table not in self.columns]
         if missing:
             self.status.set("Chýbajú tabuľky")
-            self.status_label.configure(text=self.status.get())
             messagebox.showerror(
                 "Databázová schéma",
                 "Nenašli sa tabuľky: " + ", ".join(missing),
                 parent=self,
             )
             return
+
         self.status.set(f"Pripojené • schéma {SCHEMA}")
-        self.status_label.configure(text=self.status.get())
         self._load_images()
+
+    def _search_clause(self, table: str, alias: str | None = None) -> tuple[str, dict[str, str]]:
+        term = self.search.get().strip()
+        if not term:
+            return "", {}
+
+        candidates = [
+            column
+            for column in self.columns.get(table, [])
+            if any(
+                marker in column.lower()
+                for marker in ("name", "path", "cmd", "type", "host", "url", "owner")
+            )
+        ][:20]
+        if not candidates:
+            return "", {}
+
+        prefix = f"{identifier(alias)}." if alias else ""
+        parts = [
+            f"CAST({prefix}{identifier(column)} AS TEXT) ILIKE :search_term"
+            for column in candidates
+        ]
+        return "WHERE (" + " OR ".join(parts) + ")", {
+            "search_term": f"%{term}%"
+        }
 
     def _load_images(self) -> None:
         self.current_table = "images"
-        self.page.set(1)
-        where_sql, params = self._search_clause("images")
+        self.current_image_id = None
+        self.current_process_id = None
+        self.current_page = 0
+        where_sql, params = self._search_clause("images", "img")
+        sql = (
+            f"SELECT img.*, "
+            f"(SELECT COUNT(*) FROM {identifier(SCHEMA)}.{identifier('processes')} p "
+            f"WHERE p.image_id = img.id) AS process_count "
+            f"FROM {identifier(SCHEMA)}.{identifier('images')} img "
+            f"{where_sql} ORDER BY img.id LIMIT :limit OFFSET :offset"
+        )
         self._run_query(
             "images",
-            f"SELECT * FROM {identifier(SCHEMA)}.{identifier('images')} "
-            f"{where_sql} ORDER BY id LIMIT :limit",
-            {**params, "limit": PAGE_SIZE},
-            "Images",
+            sql,
+            {**params, "limit": PAGE_SIZE, "offset": self.current_page * PAGE_SIZE},
+            "Images — vyber obrázok",
         )
 
-    def _tree_selected(self, _event: tk.Event) -> None:
+    def _image_selected(self, _event: tk.Event | None = None) -> None:
+        selected = self.image_tree.selection()
+        if not selected:
+            return
+        image_id = self.image_tree.item(selected[0], "values")[0]
+        self.current_image_id = image_id
+        self.current_process_id = None
+        self.current_table = "processes"
+        self.current_page = 0
+        where_sql, params = self._search_clause("processes")
+        sql = (
+            f"SELECT * FROM {identifier(SCHEMA)}.{identifier('processes')} "
+            f"WHERE image_id = :image_id "
+            f"{where_sql.replace('WHERE ', 'AND ', 1)} "
+            f"ORDER BY id LIMIT :limit OFFSET :offset"
+        )
+        self._run_query(
+            "processes",
+            sql,
+            {
+                **params,
+                "image_id": image_id,
+                "limit": PAGE_SIZE,
+                "offset": self.current_page * PAGE_SIZE,
+            },
+            f"Processes — image {image_id}",
+        )
+
+    def _process_selected(self, _event: tk.Event | None = None) -> None:
+        if self.current_table != "processes":
+            return
+        selected = self.result_tree.selection()
+        if not selected:
+            return
+        values = self.result_tree.item(selected[0], "values")
+        columns = self.result_tree["columns"]
+        if "id" not in columns:
+            return
+        process_id = values[list(columns).index("id")]
+        self.current_process_id = process_id
+        self.current_table = "events"
+        self.current_page = 0
+        where_sql, params = self._search_clause("events")
+        sql = (
+            f"SELECT * FROM {identifier(SCHEMA)}.{identifier('events')} "
+            f"WHERE process_id = :process_id "
+            f"{where_sql.replace('WHERE ', 'AND ', 1)} "
+            f"ORDER BY event_time DESC NULLS LAST, id "
+            f"LIMIT :limit OFFSET :offset"
+        )
+        self._run_query(
+            "events",
+            sql,
+            {
+                **params,
+                "process_id": process_id,
+                "limit": PAGE_SIZE,
+                "offset": self.current_page * PAGE_SIZE,
+            },
+            f"Events — process {process_id}",
+        )
+
+    def _run_query(
+        self, table: str, sql: str, params: dict[str, Any], title: str
+    ) -> None:
         if not self.engine:
             return
-        kind = getattr(self, "_selected_kind", "")
-        node_id = getattr(self, "_selected_id", None)
-        if kind == "image":
-            self.current_table = "processes"
-            self.page.set(1)
-            where_sql, params = self._search_clause("processes")
-            self._run_query(
-                "processes",
-                f"SELECT * FROM {identifier(SCHEMA)}.{identifier('processes')} "
-                f"WHERE image_id = :node_id {where_sql.replace('WHERE ', 'AND ', 1)} ORDER BY id LIMIT :limit",
-                {**params, "node_id": node_id, "limit": PAGE_SIZE},
-                f"Processes pre image {node_id}",
-            )
-        elif kind == "process":
-            self.current_table = "events"
-            self.page.set(1)
-            where_sql, params = self._search_clause("events")
-            self._run_query(
-                "events",
-                f"SELECT * FROM {identifier(SCHEMA)}.{identifier('events')} "
-                f"WHERE process_id = :node_id {where_sql.replace('WHERE ', 'AND ', 1)} "
-                "ORDER BY event_time DESC NULLS LAST LIMIT :limit",
-                {**params, "node_id": node_id, "limit": PAGE_SIZE},
-                f"Events pre process {node_id}",
-            )
-
-    def _list_selected(self, _event: tk.Event) -> None:
-        index = self.tree_list.index(f"@{_event.x},{_event.y}")
-        line_number = int(index.split(".", 1)[0]) - 1
-        if line_number < 0 or line_number >= len(self.nodes):
-            return
-        _label, kind, node_id = self.nodes[line_number]
-        self._selected_kind = kind
-        self._selected_id = node_id
-        self._tree_selected(_event)
-
-    def _search_clause(self, table: str) -> tuple[str, dict[str, str]]:
-        term = self.search_entry.get("1.0", "end-1c").strip()
-        if not term:
-            return "", {}
-        text_columns = [
-            column for column in self.columns.get(table, [])
-            if any(marker in column.lower() for marker in ("name", "path", "cmd", "type", "host", "url", "owner"))
-        ]
-        if not text_columns:
-            return "", {}
-        parts = [
-            f"CAST({identifier(column)} AS TEXT) ILIKE :search_term"
-            for column in text_columns[:20]
-        ]
-        return "WHERE (" + " OR ".join(parts) + ")", {"search_term": f"%{term}%"}
-
-    def _run_query(self, table: str, sql: str, params: dict[str, Any], title: str) -> None:
-        if self.loading or not self.engine:
-            return
+        self.query_generation += 1
+        generation = self.query_generation
         self.loading = True
-        self.title_button.configure(text=title)
+        self.current_title = title
+        self.content_title.configure(text=f"{title} • načítavam…")
+        self._clear_result_tree()
+        self.page_info.set("Načítavam dáta…")
+        self.prev_button.configure(state="disabled")
+        self.next_button.configure(state="disabled")
         self._run_async(
             lambda: self._execute_query(sql, params),
-            lambda result, error: self._query_finished(table, result, error),
+            lambda rows, error: self._query_finished(
+                table, rows, error, generation, title
+            ),
         )
 
     def _execute_query(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         assert self.engine is not None
         with self.engine.connect() as connection:
             connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-            return [dict(row) for row in connection.execute(text(sql), params).mappings()]
+            result = connection.execute(text(sql), params)
+            return [dict(row) for row in result.mappings()]
 
     def _query_finished(
-        self, table: str, rows: list[dict[str, Any]] | None, error: Exception | None
+        self,
+        table: str,
+        rows: list[dict[str, Any]] | None,
+        error: Exception | None,
+        generation: int,
+        title: str,
     ) -> None:
+        if generation != self.query_generation:
+            return
         self.loading = False
+
         if error:
             self.status.set("Dotaz zlyhal")
-            self.status_label.configure(text=self.status.get())
+            self.page_info.set("Chyba pri načítaní dát")
             messagebox.showerror("SQL dotaz", str(error), parent=self)
             return
+
         assert rows is not None
+        self.current_table = table
         self.current_rows = rows
+        self.content_title.configure(text=title)
         self._show_rows(table, rows)
-        self._populate_hierarchy(table, rows)
+        self._update_paging(len(rows))
+
+    def _clear_result_tree(self) -> None:
+        self.result_tree.delete(*self.result_tree.get_children())
+        self.result_tree["columns"] = ()
 
     def _show_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
-        columns = self.columns.get(table, list(rows[0]) if rows else [])
-        self.table_list.configure(state="normal")
-        self.table_list.delete("1.0", tk.END)
-        if columns:
-            self.table_list.insert(tk.END, " | ".join(columns) + "\n")
-        if rows:
-            for row in rows[:PAGE_SIZE]:
-                self.table_list.insert(
-                    tk.END, " | ".join(
-                        value_text(row.get(column))[:40] for column in columns
-                    ) + "\n",
-                )
-        else:
-            self.table_list.insert(tk.END, "Žiadne záznamy pre aktuálny výber.")
-        self.table_list.configure(state="disabled")
-        self.page_info.set(f"{len(rows)} záznamov • tabuľka {table}")
-
-    def _populate_hierarchy(self, table: str, rows: list[dict[str, Any]]) -> None:
         if table == "images":
-            self.tree_list.configure(state="normal")
-            self.tree_list.delete("1.0", tk.END)
-            self.nodes.clear()
-            self.image_node_count = 0
+            self.image_tree.delete(*self.image_tree.get_children())
             for row in rows:
                 image_id = row.get("id")
-                label = f"Image {image_id}: {row.get('original_name') or row.get('path') or ''}"
-                self.nodes.append((label, "image", image_id))
-                self.tree_list.insert(tk.END, label[:45] + "\n")
-            self.image_node_count = len(self.nodes)
-            self.tree_list.configure(state="disabled")
-        elif table == "processes":
-            if self.image_node_count:
-                self.tree_list.configure(state="normal")
-                self.tree_list.delete(f"{self.image_node_count + 1}.0", tk.END)
-                self.nodes = self.nodes[:self.image_node_count]
-            for row in rows:
-                process_id = row.get("id")
-                label = f"Process {process_id}: {row.get('name') or ''}"
-                self.nodes.append((label, "process", process_id))
-                self.tree_list.insert(tk.END, f"  {label[:43]}\n")
-            self.tree_list.configure(state="disabled")
+                name = row.get("original_name") or row.get("path") or "(bez názvu)"
+                self.image_tree.insert(
+                    "",
+                    "end",
+                    iid=f"image_{image_id}",
+                    values=(image_id, name, row.get("process_count", 0)),
+                )
+            self._clear_result_tree()
+            self.content_title.configure(text="Images — vyber obrázok")
+            self.page_info.set(f"{len(rows)} obrázkov načítaných")
+            return
+
+        if not rows:
+            self._clear_result_tree()
+            self.page_info.set("Žiadne záznamy pre aktuálny výber")
+            return
+
+        # Keep all columns visible; long values can be inspected by horizontal scrolling.
+        columns = list(rows[0].keys())
+        self.result_tree.delete(*self.result_tree.get_children())
+        self.result_tree["columns"] = columns
+
+        for column in columns:
+            self.result_tree.heading(column, text=column)
+            self.result_tree.column(
+                column,
+                width=max(100, min(260, len(column) * 11)),
+                minwidth=70,
+                anchor="w",
+                stretch=True,
+            )
+
+        for index, row in enumerate(rows):
+            values = [value_text(row.get(column)) for column in columns]
+            iid = f"{table}_{index}"
+            self.result_tree.insert("", "end", iid=iid, values=values)
+
+        if table == "processes":
+            self.page_info.set(
+                f"{len(rows)} procesov • dvojklikom alebo kliknutím vyber proces a zobraz eventy"
+            )
+        else:
+            self.page_info.set(f"{len(rows)} eventov")
+
+    def _update_paging(self, row_count: int) -> None:
+        offset = self.current_page * PAGE_SIZE
+        self.prev_button.configure(
+            state="normal" if self.current_page > 0 else "disabled"
+        )
+        self.next_button.configure(
+            state="normal" if row_count == PAGE_SIZE else "disabled"
+        )
+        self.page_info.set(
+            f"Strana {self.current_page + 1} • zobrazených {row_count} záznamov"
+        )
+
+    def apply_search(self) -> None:
+        self.current_page = 0
+        self.refresh_current()
+
+    def clear_search(self) -> None:
+        self.search.set("")
+        self.apply_search()
 
     def refresh_current(self) -> None:
         if self.current_table == "images":
             self._load_images()
-        elif hasattr(self, "_selected_kind"):
-            self._tree_selected(tk.Event())
+        elif self.current_table == "processes" and self.current_image_id is not None:
+            self._load_processes_for_current_image()
+        elif self.current_table == "events" and self.current_process_id is not None:
+            self._load_events_for_current_process()
+        else:
+            self._load_images()
 
-    def clear_search(self) -> None:
-        self.search_entry.configure(state="normal")
-        self.search_entry.delete("1.0", tk.END)
-        self.search_entry.configure(state="normal")
-        self.refresh_current()
+    def _load_processes_for_current_image(self) -> None:
+        image_id = self.current_image_id
+        self.current_table = "processes"
+        where_sql, params = self._search_clause("processes")
+        sql = (
+            f"SELECT * FROM {identifier(SCHEMA)}.{identifier('processes')} "
+            f"WHERE image_id = :image_id "
+            f"{where_sql.replace('WHERE ', 'AND ', 1)} "
+            f"ORDER BY id LIMIT :limit OFFSET :offset"
+        )
+        self._run_query(
+            "processes",
+            sql,
+            {
+                **params,
+                "image_id": image_id,
+                "limit": PAGE_SIZE,
+                "offset": self.current_page * PAGE_SIZE,
+            },
+            f"Processes — image {image_id}",
+        )
 
-    def _search_changed(self, _event: tk.Event) -> None:
-        if self.search_job is not None:
-            self.after_cancel(self.search_job)
-        self.search_job = self.after(350, self._search_finished)
-
-    def _search_finished(self) -> None:
-        self.search_job = None
-        self.refresh_current()
+    def _load_events_for_current_process(self) -> None:
+        process_id = self.current_process_id
+        self.current_table = "events"
+        where_sql, params = self._search_clause("events")
+        sql = (
+            f"SELECT * FROM {identifier(SCHEMA)}.{identifier('events')} "
+            f"WHERE process_id = :process_id "
+            f"{where_sql.replace('WHERE ', 'AND ', 1)} "
+            f"ORDER BY event_time DESC NULLS LAST, id "
+            f"LIMIT :limit OFFSET :offset"
+        )
+        self._run_query(
+            "events",
+            sql,
+            {
+                **params,
+                "process_id": process_id,
+                "limit": PAGE_SIZE,
+                "offset": self.current_page * PAGE_SIZE,
+            },
+            f"Events — process {process_id}",
+        )
 
     def previous_page(self) -> None:
-        if self.page.get() > 1:
-            self.page.set(self.page.get() - 1)
+        if self.current_page > 0:
+            self.current_page -= 1
             self.refresh_current()
 
     def next_page(self) -> None:
-        self.page.set(self.page.get() + 1)
-        self.refresh_current()
+        if len(self.current_rows) == PAGE_SIZE:
+            self.current_page += 1
+            self.refresh_current()
 
-    def _run_async(self, operation: Callable[[], Any], callback: Callable[[Any, Exception | None], None]) -> None:
+    def _run_async(
+        self,
+        operation: Callable[[], Any],
+        callback: Callable[[Any, Exception | None], None],
+    ) -> None:
         def worker() -> None:
             try:
                 result, error = operation(), None
