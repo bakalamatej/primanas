@@ -456,16 +456,7 @@ class Explorer(BoxLayout):
 
     def _set_table_title(self, table: str, title: str, count: int | None) -> None:
         label = self.table_titles[table]
-        suffix = ""
-        if count is not None:
-            nouns = {
-                "images": ("aplikácia", "aplikácie", "aplikácií"),
-                "processes": ("proces", "procesy", "procesov"),
-                "events": ("event", "eventy", "eventov"),
-            }[table]
-            noun = nouns[0] if count == 1 else nouns[1] if 2 <= count <= 4 else nouns[2]
-            suffix = f": {count} {noun}"
-        label.text = title + suffix
+        label.text = title if count is None else f"{title}: {count}"
 
     def _row_button(self, label: str) -> Button:
         button = Button(
